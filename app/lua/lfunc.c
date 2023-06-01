@@ -4,13 +4,11 @@
 ** See Copyright Notice in lua.h
 */
 
-
-#include "c_stddef.h"
-
 #define lfunc_c
 #define LUA_CORE
 
 #include "lua.h"
+#include <string.h>
 
 #include "lfunc.h"
 #include "lgc.h"
@@ -121,14 +119,13 @@ Proto *luaF_newproto (lua_State *L) {
   f->sizep = 0;
   f->code = NULL;
   f->sizecode = 0;
-  f->sizelineinfo = 0;
   f->sizeupvalues = 0;
   f->nups = 0;
   f->upvalues = NULL;
   f->numparams = 0;
   f->is_vararg = 0;
   f->maxstacksize = 0;
-  f->lineinfo = NULL;
+  f->packedlineinfo = NULL;
   f->sizelocvars = 0;
   f->locvars = NULL;
   f->linedefined = 0;
@@ -143,9 +140,9 @@ void luaF_freeproto (lua_State *L, Proto *f) {
   luaM_freearray(L, f->k, f->sizek, TValue);
   luaM_freearray(L, f->locvars, f->sizelocvars, struct LocVar);
   luaM_freearray(L, f->upvalues, f->sizeupvalues, TString *);
-  if (!proto_is_readonly(f)) {
-    luaM_freearray(L, f->code, f->sizecode, Instruction);
-    luaM_freearray(L, f->lineinfo, f->sizelineinfo, int);
+  luaM_freearray(L, f->code, f->sizecode, Instruction);
+  if (f->packedlineinfo) {
+    luaM_freearray(L, f->packedlineinfo, strlen(cast(char *, f->packedlineinfo))+1, unsigned char);
   }
   luaM_free(L, f);
 }

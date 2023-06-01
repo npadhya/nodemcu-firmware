@@ -60,9 +60,12 @@ sample code bearing this copyright.
 #include "platform.h"
 #include "osapi.h"
 
-#define noInterrupts os_intr_lock
-#define interrupts os_intr_unlock
+#define noInterrupts ets_intr_lock
+#define interrupts ets_intr_unlock
 #define delayMicroseconds os_delay_us
+
+// 1 for keeping the parasitic power on H
+#define owDefaultPower 1
 
 #if ONEWIRE_SEARCH
 // global search state
@@ -71,6 +74,20 @@ static uint8_t LastDiscrepancy[NUM_OW];
 static uint8_t LastFamilyDiscrepancy[NUM_OW];
 static uint8_t LastDeviceFlag[NUM_OW];
 #endif
+
+struct onewire_timings_s onewire_timings = {
+	.reset_tx = 480,
+	.reset_wait = 70,
+	.reset_rx = 410,
+	.w_1_low = 5,
+	.w_1_high = 52,
+	.w_0_low = 65,
+	.w_0_high = 5,
+	.r_low = 5,
+	.r_wait = 8,
+	.r_delay = 52
+};
+
 
 void onewire_init(uint8_t pin)
 {
@@ -104,15 +121,14 @@ uint8_t onewire_reset(uint8_t pin)
 
 	noInterrupts();
 	DIRECT_WRITE_LOW(pin);
-	DIRECT_MODE_OUTPUT(pin);	// drive output low
 	interrupts();
-	delayMicroseconds(480);
+	delayMicroseconds(onewire_timings.reset_tx);
 	noInterrupts();
 	DIRECT_MODE_INPUT(pin);	// allow it to float
-	delayMicroseconds(70);
+	delayMicroseconds(onewire_timings.reset_wait);
 	r = !DIRECT_READ(pin);
 	interrupts();
-	delayMicroseconds(410);
+	delayMicroseconds(onewire_timings.reset_rx);
 	return r;
 }
 
@@ -120,24 +136,31 @@ uint8_t onewire_reset(uint8_t pin)
 // Write a bit. Port and bit is used to cut lookup time and provide
 // more certain timing.
 //
-static void onewire_write_bit(uint8_t pin, uint8_t v)
+static void onewire_write_bit(uint8_t pin, uint8_t v, uint8_t power)
 {
 	if (v & 1) {
 		noInterrupts();
 		DIRECT_WRITE_LOW(pin);
-		DIRECT_MODE_OUTPUT(pin);	// drive output low
-		delayMicroseconds(10);
-		DIRECT_WRITE_HIGH(pin);	// drive output high
+		delayMicroseconds(onewire_timings.w_1_low);
+		if (power) {
+			DIRECT_WRITE_HIGH(pin);
+		} else {
+			DIRECT_MODE_INPUT(pin);	// drive output high by the pull-up
+		}
+		delayMicroseconds(8);
 		interrupts();
-		delayMicroseconds(55);
+		delayMicroseconds(onewire_timings.w_1_high);
 	} else {
 		noInterrupts();
 		DIRECT_WRITE_LOW(pin);
-		DIRECT_MODE_OUTPUT(pin);	// drive output low
-		delayMicroseconds(65);
-		DIRECT_WRITE_HIGH(pin);	// drive output high
+		delayMicroseconds(onewire_timings.w_0_low);
+		if (power) {
+			DIRECT_WRITE_HIGH(pin);
+		} else {
+			DIRECT_MODE_INPUT(pin);	// drive output high by the pull-up
+		}
 		interrupts();
-		delayMicroseconds(5);
+		delayMicroseconds(onewire_timings.w_0_high);
 	}
 }
 
@@ -150,21 +173,22 @@ static uint8_t onewire_read_bit(uint8_t pin)
 	uint8_t r;
 
 	noInterrupts();
-	DIRECT_MODE_OUTPUT(pin);
 	DIRECT_WRITE_LOW(pin);
-	delayMicroseconds(3);
+
+	delayMicroseconds(onewire_timings.r_low);
 	DIRECT_MODE_INPUT(pin);	// let pin float, pull up will raise
-	delayMicroseconds(10);
+	delayMicroseconds(onewire_timings.r_wait);
 	r = DIRECT_READ(pin);
 	interrupts();
-	delayMicroseconds(53);
+	delayMicroseconds(onewire_timings.r_delay);
 	return r;
 }
 
 //
-// Write a byte. The writing code uses the active drivers to raise the
+// Write a byte. The writing code uses the external pull-up to raise the
 // pin high, if you need power after the write (e.g. DS18S20 in
-// parasite power mode) then set 'power' to 1, otherwise the pin will
+// parasite power mode) then set 'power' to 1 and the output driver will
+// be activated at the end of the write. Otherwise the pin will
 // go tri-state at the end of the write to avoid heating in a short or
 // other mishap.
 //
@@ -172,26 +196,15 @@ void onewire_write(uint8_t pin, uint8_t v, uint8_t power /* = 0 */) {
   uint8_t bitMask;
 
   for (bitMask = 0x01; bitMask; bitMask <<= 1) {
-	  onewire_write_bit(pin, (bitMask & v)?1:0);
-  }
-  if ( !power) {
-  	noInterrupts();
-  	DIRECT_MODE_INPUT(pin);
-  	DIRECT_WRITE_LOW(pin);
-  	interrupts();
+    // send last bit with requested power mode
+    onewire_write_bit(pin, (bitMask & v)?1:0, bitMask & 0x80 ? power : 0);
   }
 }
 
 void onewire_write_bytes(uint8_t pin, const uint8_t *buf, uint16_t count, bool power /* = 0 */) {
   uint16_t i;
   for (i = 0 ; i < count ; i++)
-    onewire_write(pin, buf[i], 0);
-  if (!power) {
-    noInterrupts();
-    DIRECT_MODE_INPUT(pin);
-    DIRECT_WRITE_LOW(pin);
-    interrupts();
-  }
+    onewire_write(pin, buf[i], i < count-1 ? owDefaultPower : power);
 }
 
 //
@@ -220,9 +233,9 @@ void onewire_select(uint8_t pin, const uint8_t rom[8])
 {
     uint8_t i;
 
-    onewire_write(pin, 0x55, 0);           // Choose ROM
+    onewire_write(pin, 0x55, owDefaultPower);           // Choose ROM
 
-    for (i = 0; i < 8; i++) onewire_write(pin, rom[i], 0);
+    for (i = 0; i < 8; i++) onewire_write(pin, rom[i], owDefaultPower);
 }
 
 //
@@ -230,7 +243,7 @@ void onewire_select(uint8_t pin, const uint8_t rom[8])
 //
 void onewire_skip(uint8_t pin)
 {
-    onewire_write(pin, 0xCC, 0);           // Skip ROM
+    onewire_write(pin, 0xCC, owDefaultPower);           // Skip ROM
 }
 
 void onewire_depower(uint8_t pin)
@@ -290,7 +303,7 @@ void onewire_target_search(uint8_t pin, uint8_t family_code)
 // Return TRUE  : device found, ROM number in ROM_NO buffer
 //        FALSE : device not found, end of search
 //
-uint8_t onewire_search(uint8_t pin, uint8_t *newAddr)
+uint8_t onewire_search(uint8_t pin, uint8_t *newAddr, uint8_t alarm_search)
 {
    uint8_t id_bit_number;
    uint8_t last_zero, rom_byte_number, search_result;
@@ -319,7 +332,7 @@ uint8_t onewire_search(uint8_t pin, uint8_t *newAddr)
       }
 
       // issue the search command
-      onewire_write(pin, 0xF0, 0);
+      onewire_write(pin, alarm_search ? 0xEC : 0xF0, owDefaultPower);
 
       // loop to do the search
       do
@@ -365,7 +378,7 @@ uint8_t onewire_search(uint8_t pin, uint8_t *newAddr)
               ROM_NO[pin][rom_byte_number] &= ~rom_byte_mask;
 
             // serial number search direction write bit
-            onewire_write_bit(pin, search_direction);
+            onewire_write_bit(pin, search_direction, 0);
 
             // increment the byte counter id_bit_number
             // and shift the mask rom_byte_mask
@@ -404,10 +417,15 @@ uint8_t onewire_search(uint8_t pin, uint8_t *newAddr)
       LastFamilyDiscrepancy[pin] = 0;
       search_result = FALSE;
    }
-   int i;
-   for (i = 0; i < 8; i++) newAddr[i] = ROM_NO[pin][i];
+   else
+   {
+      for (rom_byte_number = 0; rom_byte_number < 8; rom_byte_number++)
+      {
+         newAddr[rom_byte_number] = ROM_NO[pin][rom_byte_number];
+      }
+   }
    return search_result;
-  }
+}
 
 #endif
 
@@ -466,7 +484,7 @@ uint8_t onewire_crc8(const uint8_t *addr, uint8_t len)
 uint8_t onewire_crc8(const uint8_t *addr, uint8_t len)
 {
 	uint8_t crc = 0;
-	
+
 	while (len--) {
 		uint8_t inbyte = *addr++;
     uint8_t i;
@@ -493,8 +511,8 @@ uint8_t onewire_crc8(const uint8_t *addr, uint8_t len)
 //    ReadBytes(net, buf+3, 10);  // Read 6 data bytes, 2 0xFF, 2 CRC16
 //    if (!CheckCRC16(buf, 11, &buf[11])) {
 //        // Handle error.
-//    }     
-//          
+//    }
+//
 // @param input - Array of bytes to checksum.
 // @param len - How many bytes to use.
 // @param inverted_crc - The two CRC16 bytes in the received data.

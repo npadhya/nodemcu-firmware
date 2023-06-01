@@ -15,111 +15,121 @@ TARGET = eagle
 #FLAVOR = release
 FLAVOR = debug
 
-#EXTRA_CCFLAGS += -u
+# Handle Lua Directory selector
+ifeq ("$(LUA)","")
+  LUA_DIR := lua
+else ifeq ("$(LUA)","51")
+  LUA_DIR := lua
+else ifeq ("$(LUA)","53")
+  LUA_DIR := lua53
+else
+  $(error Unsupported value "$(LUA)" for variable "LUA", \
+    expected "51", "53" or unset/empty)
+endif
 
 ifndef PDIR # {
 GEN_IMAGES= eagle.app.v6.out
 GEN_BINS= eagle.app.v6.bin
-SPECIAL_MKTARGETS=$(APP_MKTARGETS)
+OPT_MKTARGETS        := coap dht http mqtt pcm sjson tsl2561 websocket
+OPT_MKLIBTARGETS     := u8g2 ucg
+SEL_MKTARGETS        := $(shell $(CC) -E -dM include/user_modules.h | sed -n '/^\#define LUA_USE_MODULES_/{s/.\{24\}\(.*\)/\L\1/; p}')
+OPT_SEL_MKLIBTARGETS := $(foreach tgt,$(OPT_MKLIBTARGETS),$(findstring $(tgt), $(SEL_MKTARGETS)))
+OPT_SEL_MKTARGETS    := $(foreach tgt,$(OPT_MKTARGETS),$(findstring $(tgt), $(SEL_MKTARGETS))) \
+                        $(foreach tgt,$(OPT_SEL_MKLIBTARGETS),$(tgt)lib)
+OPT_SEL_COMPONENTS   := $(foreach tgt,$(OPT_SEL_MKTARGETS),$(tgt)/lib$(tgt).a)
+SPECIAL_MKTARGETS    :=$(APP_MKTARGETS)
+
 SUBDIRS= 					\
 	user 					\
+	crypto					\
 	driver 					\
-	lwip 					\
-	json 					\
-	upgrade 				\
+	mbedtls 				\
 	platform 				\
 	libc 					\
-	lua 					\
-	coap 					\
-	mqtt 					\
-	u8glib 					\
+	$(LUA_DIR)				\
+	lwip 					\
 	smart 					\
-	wofs 					\
 	modules 				\
 	spiffs 					\
-	cjson 					\
-	crypto 					\
-	dhtlib
+	net					\
+	fatfs					\
+	esp-gdbstub				\
+	pm					\
+	uzlib					\
+	$(OPT_SEL_MKTARGETS)
 
 endif # } PDIR
 
 APPDIR = .
 LDDIR = ../ld
 
-CCFLAGS += -Os
-
-TARGET_LDFLAGS = 				\
+TARGET_LDFLAGS = 			\
 	-nostdlib 				\
 	-Wl,-EL 				\
-	--longcalls 				\
+	--longcalls 			\
 	--text-section-literals
 
-ifeq ($(FLAVOR),debug)
-    TARGET_LDFLAGS += -g -Os
-endif
+LD_FILE = $(LDDIR)/nodemcu.ld
 
-ifeq ($(FLAVOR),release)
-    TARGET_LDFLAGS += -Os
-endif
-
-LD_FILE = $(LDDIR)/eagle.app.v6.ld
-
-ifeq ($(APP), 1)
-	LD_FILE = $(LDDIR)/eagle.app.v6.app1.ld
-endif
-
-ifeq ($(APP), 2)
-	LD_FILE = $(LDDIR)/eagle.app.v6.app2.ld
-endif
-
-COMPONENTS_eagle.app.v6 = 			\
+COMPONENTS_eagle.app.v6 = 		\
 	user/libuser.a 				\
+	crypto/libcrypto.a			\
 	driver/libdriver.a 			\
-	lwip/liblwip.a 				\
-	json/libjson.a 				\
-	upgrade/libupgrade.a 			\
-	platform/libplatform.a 			\
+	platform/libplatform.a 		\
 	libc/liblibc.a 				\
-	lua/liblua.a 				\
-	coap/coap.a 				\
-	mqtt/mqtt.a 				\
-	u8glib/u8glib.a 			\
+	$(LUA_DIR)/liblua.a 		\
+	lwip/liblwip.a 				\
 	smart/smart.a 				\
-	wofs/wofs.a 				\
 	spiffs/spiffs.a 			\
-	cjson/libcjson.a 			\
-	crypto/libcrypto.a 			\
-	dhtlib/libdhtlib.a 			\
-	modules/libmodules.a
+	fatfs/libfatfs.a			\
+	pm/libpm.a					\
+	esp-gdbstub/libgdbstub.a	\
+	net/libnodemcu_net.a		\
+	mbedtls/libmbedtls.a    	\
+	modules/libmodules.a		\
+	smart/smart.a 				\
+	uzlib/libuzlib.a 			\
+	$(OPT_SEL_COMPONENTS)
 
-LINKFLAGS_eagle.app.v6 = 			\
-	-L../lib 				\
-	-Wl,--gc-sections 			\
-	-Xlinker -Map=mapfile 			\
+# Inspect the modules library and work out which modules need to be linked.
+# For each enabled module, a symbol name of the form XYZ_module_selected is
+# returned. At link time those names are declared undefined, so those (and
+# only those) modules are pulled in.
+SELECTED_MODULE_SYMS=$(filter %_module_selected %module_selected1,$(shell $(NM) modules/.output/$(TARGET)/$(FLAVOR)/lib/libmodules.a))
+
+LINKFLAGS_eagle.app.v6 = 	\
+	-Wl,--gc-sections 		\
+	-Wl,-Map=mapfile 		\
 	-nostdlib 				\
-    -T$(LD_FILE) 				\
-	-Wl,--no-check-sections 		\
-	-Wl,--wrap=_xtos_set_exception_handler \
-	-Wl,-static 				\
-	-Wl,--start-group 			\
-	-lc 					\
+	-T$(LD_FILE) 			\
+	-Wl,@../ld/defsym.rom	\
+	-Wl,--no-check-sections	\
+	-Wl,-static 			\
+	$(addprefix -u , $(SELECTED_MODULE_SYMS)) \
+	-Wl,--start-group 		\
+	-lmain 					\
+	$(DEP_LIBS_eagle.app.v6)\
+	-Wl,--end-group 		\
+	-Wl,--start-group 		\
 	-lgcc 					\
 	-lhal 					\
 	-lphy 					\
 	-lpp 					\
 	-lnet80211 				\
+	-lsmartconfig 			\
 	-lwpa 					\
-	-lmain 					\
-	-ljson 					\
-	-lsmartconfig 				\
-	-lssl 					\
-	$(DEP_LIBS_eagle.app.v6) 		\
-	-Wl,--end-group 			\
-	-lm
+	-lwpa2					\
+	-lcrypto				\
+	-lwps					\
+	-lc 					\
+	-lm						\
+	-Wl,--end-group
+#	-Wl,--cref
+#	-Wl,--wrap=_xtos_set_exception_handler
 
 DEPENDS_eagle.app.v6 = 				\
                 $(LD_FILE) 			\
-                $(LDDIR)/eagle.rom.addr.v6.ld
+		Makefile
 
 #############################################################
 # Configuration i.e. compile options etc.
@@ -131,24 +141,15 @@ DEPENDS_eagle.app.v6 = 				\
 
 #UNIVERSAL_TARGET_DEFINES = 			\
 
-# Other potential configuration flags include:
-#	-DTXRX_TXBUF_DEBUG
-#	-DTXRX_RXBUF_DEBUG
-#	-DWLAN_CONFIG_CCX
-CONFIGURATION_DEFINES =	-D__ets__ 		\
-			-DICACHE_FLASH 		\
-			-DLWIP_OPEN_SRC 	\
-			-DPBUF_RSV_FOR_WLAN 	\
-			-DEBUF_LWIP
+CONFIGURATION_DEFINES += -DLWIP_OPEN_SRC
 
-DEFINES += 					\
-	$(UNIVERSAL_TARGET_DEFINES) 		\
+DEFINES += 							\
+	$(UNIVERSAL_TARGET_DEFINES) 	\
 	$(CONFIGURATION_DEFINES)
 
-DDEFINES += 					\
-	$(UNIVERSAL_TARGET_DEFINES) 		\
+DDEFINES += 						\
+	$(UNIVERSAL_TARGET_DEFINES) 	\
 	$(CONFIGURATION_DEFINES)
-
 
 #############################################################
 # Recursion Magic - Don't touch this!!
@@ -161,12 +162,11 @@ DDEFINES += 					\
 #
 # Required for each makefile to inherit from the parent
 #
-
-INCLUDES := $(INCLUDES) -I $(PDIR)include
-INCLUDES += -I ./
+INCLUDES := -I $(PDIR)libc -I $(PDIR)$(LUA_DIR) -I $(PDIR)platform \
+            $(INCLUDES) -I $(PDIR) -I $(PDIR)include
 PDIR := ../$(PDIR)
-sinclude $(PDIR)Makefile
 
+sinclude $(PDIR)Makefile
 
 .PHONY: FORCE
 FORCE:

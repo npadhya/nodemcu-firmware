@@ -1,7 +1,8 @@
 #ifndef __ONEWIRE_H__
 #define __ONEWIRE_H__
 
-#include "c_types.h"
+#include <stdint.h>
+#include <stdbool.h>
 
 // You can exclude certain features from OneWire.  In theory, this
 // might save some space.  In practice, the compiler automatically
@@ -41,10 +42,28 @@
 // Platform specific I/O definitions
 
 #define DIRECT_READ(pin)         (0x1 & GPIO_INPUT_GET(GPIO_ID_PIN(pin_num[pin])))
-#define DIRECT_MODE_INPUT(pin)   GPIO_DIS_OUTPUT(pin_num[pin])
+#define DIRECT_MODE_INPUT(pin)   GPIO_DIS_OUTPUT(GPIO_ID_PIN(pin_num[pin]))
 #define DIRECT_MODE_OUTPUT(pin)
 #define DIRECT_WRITE_LOW(pin)    (GPIO_OUTPUT_SET(GPIO_ID_PIN(pin_num[pin]), 0))
 #define DIRECT_WRITE_HIGH(pin)   (GPIO_OUTPUT_SET(GPIO_ID_PIN(pin_num[pin]), 1))
+
+// This allows tweaking of individual timings when doing onewire operations
+struct onewire_timings_s {
+	uint16_t reset_tx;
+	uint16_t reset_wait;
+	uint16_t reset_rx;
+
+	uint8_t w_1_low;
+	uint8_t w_1_high;
+	uint8_t w_0_low;
+	uint8_t w_0_high;
+
+	uint8_t r_low;
+	uint8_t r_wait;
+	uint8_t r_delay;
+};
+
+extern struct onewire_timings_s onewire_timings;
 
 void onewire_init(uint8_t pin);
 
@@ -74,10 +93,10 @@ void onewire_read_bytes(uint8_t pin, uint8_t *buf, uint16_t count);
 
 // Write a bit. The bus is always left powered at the end, see
 // note in write() about that.
-// void onewire_write_bit(uint8_t pin, uint8_t v);
+static void onewire_write_bit(uint8_t pin, uint8_t v, uint8_t power);
 
 // Read a bit.
-// uint8_t onewire_read_bit(uint8_t pin);
+static uint8_t onewire_read_bit(uint8_t pin);
 
 // Stop forcing power onto the bus. You only need to do this if
 // you used the 'power' flag to write() or used a write_bit() call
@@ -100,7 +119,8 @@ void onewire_target_search(uint8_t pin, uint8_t family_code);
 // might be a good idea to check the CRC to make sure you didn't
 // get garbage.  The order is deterministic. You will always get
 // the same devices in the same order.
-uint8_t onewire_search(uint8_t pin, uint8_t *newAddr);
+// If alarm_search is non-zero, it only looks for devices with the Alarm Flag set (if supported)
+uint8_t onewire_search(uint8_t pin, uint8_t *newAddr, uint8_t alarm_search);
 #endif
 
 #if ONEWIRE_CRC
@@ -120,8 +140,8 @@ uint8_t onewire_crc8(const uint8_t *addr, uint8_t len);
 //    ReadBytes(net, buf+3, 10);  // Read 6 data bytes, 2 0xFF, 2 CRC16
 //    if (!CheckCRC16(buf, 11, &buf[11])) {
 //        // Handle error.
-//    }     
-//          
+//    }
+//
 // @param input - Array of bytes to checksum.
 // @param len - How many bytes to use.
 // @param inverted_crc - The two CRC16 bytes in the received data.

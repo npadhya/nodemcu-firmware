@@ -15,6 +15,8 @@ ifndef PDIR
 GEN_LIBS = libplatform.a
 endif
 
+STD_CFLAGS=-std=gnu11 -Wimplicit
+
 #############################################################
 # Configuration i.e. compile options etc.
 # Target specific stuff (defines etc.) goes in here!
@@ -22,7 +24,7 @@ endif
 #   makefile at its root level - these are then overridden
 #   for a subtree within the makefile rooted therein
 #
-#DEFINES += 
+#DEFINES +=
 
 #############################################################
 # Recursion Magic - Don't touch this!!
@@ -36,12 +38,7 @@ endif
 # Required for each makefile to inherit from the parent
 #
 
-INCLUDES := $(INCLUDES) -I $(PDIR)include
-INCLUDES += -I ./
-INCLUDES += -I ../wofs
-INCLUDES += -I ../spiffs
-INCLUDES += -I ../libc
-INCLUDES += -I ../lua
+INCLUDES += -I ../spiffs -I ../u8g2lib/u8g2/src/clib -I ../ucglib/ucg/src/clib
 PDIR := ../$(PDIR)
 sinclude $(PDIR)Makefile
 

@@ -1,4 +1,4 @@
-/* 
+/*
  * File:   mqtt_msg.h
  * Author: Minh Tuan
  *
@@ -7,7 +7,7 @@
 
 #ifndef MQTT_MSG_H
 #define	MQTT_MSG_H
-#include "c_types.h"
+#include <stdint.h>
 #ifdef	__cplusplus
 extern "C" {
 #endif
@@ -65,6 +65,21 @@ enum mqtt_message_type
   MQTT_MSG_TYPE_DISCONNECT = 14
 };
 
+enum mqtt_connack_return_code
+{
+    MQTT_CONN_FAIL_SERVER_NOT_FOUND = -5,
+    MQTT_CONN_FAIL_NOT_A_CONNACK_MSG = -4,
+    MQTT_CONN_FAIL_DNS = -3,
+    MQTT_CONN_FAIL_TIMEOUT_RECEIVING = -2,
+    MQTT_CONN_FAIL_TIMEOUT_SENDING = -1,
+    MQTT_CONNACK_ACCEPTED = 0,
+    MQTT_CONNACK_REFUSED_PROTOCOL_VER = 1,
+    MQTT_CONNACK_REFUSED_ID_REJECTED = 2,
+    MQTT_CONNACK_REFUSED_SERVER_UNAVAILABLE = 3,
+    MQTT_CONNACK_REFUSED_BAD_USER_OR_PASS = 4,
+    MQTT_CONNACK_REFUSED_NOT_AUTHORIZED = 5
+};
+
 typedef struct mqtt_message
 {
   uint8_t* data;
@@ -72,7 +87,7 @@ typedef struct mqtt_message
 
 } mqtt_message_t;
 
-typedef struct mqtt_connection
+typedef struct mqtt_message_buffer
 {
   mqtt_message_t message;
 
@@ -80,15 +95,15 @@ typedef struct mqtt_connection
   uint8_t* buffer;
   uint16_t buffer_length;
 
-} mqtt_connection_t;
+} mqtt_message_buffer_t;
 
 typedef struct mqtt_connect_info
 {
-  char* client_id;
-  char* username;
-  char* password;
-  char* will_topic;
-  char* will_message;
+  const char* client_id;
+  const char* username;
+  const char* password;
+  const char* will_topic;
+  const char* will_message;
   int keepalive;
   int will_qos;
   int will_retain;
@@ -97,28 +112,37 @@ typedef struct mqtt_connect_info
 } mqtt_connect_info_t;
 
 
-static inline int mqtt_get_type(uint8_t* buffer) { return (buffer[0] & 0xf0) >> 4; }
-static inline int mqtt_get_dup(uint8_t* buffer) { return (buffer[0] & 0x08) >> 3; }
-static inline int mqtt_get_qos(uint8_t* buffer) { return (buffer[0] & 0x06) >> 1; }
-static inline int mqtt_get_retain(uint8_t* buffer) { return (buffer[0] & 0x01); }
+static inline uint8_t mqtt_get_type(uint8_t* buffer) { return (buffer[0] & 0xf0) >> 4; }
+static inline uint8_t mqtt_get_dup(uint8_t* buffer) { return (buffer[0] & 0x08) >> 3; }
+static inline uint8_t mqtt_get_qos(uint8_t* buffer) { return (buffer[0] & 0x06) >> 1; }
+static inline uint8_t mqtt_get_retain(uint8_t* buffer) { return (buffer[0] & 0x01); }
+static inline uint8_t mqtt_get_connect_ret_code(uint8_t* buffer) { return (buffer[3]); }
 
-void mqtt_msg_init(mqtt_connection_t* connection, uint8_t* buffer, uint16_t buffer_length);
-int mqtt_get_total_length(uint8_t* buffer, uint16_t length);
-const char* mqtt_get_publish_topic(uint8_t* buffer, uint16_t* length);
-const char* mqtt_get_publish_data(uint8_t* buffer, uint16_t* length);
-uint16_t mqtt_get_id(uint8_t* buffer, uint16_t length);
+void mqtt_msg_init(mqtt_message_buffer_t* msgb, uint8_t* buffer, uint16_t buffer_length);
+int32_t mqtt_get_total_length(uint8_t* buffer, uint16_t buffer_length);
+const char* mqtt_get_publish_topic(uint8_t* buffer, uint16_t* buffer_length);
+const char* mqtt_get_publish_data(uint8_t* buffer, uint16_t* buffer_length);
+uint16_t mqtt_get_id(uint8_t* buffer, uint16_t buffer_length);
 
-mqtt_message_t* mqtt_msg_connect(mqtt_connection_t* connection, mqtt_connect_info_t* info);
-mqtt_message_t* mqtt_msg_publish(mqtt_connection_t* connection, const char* topic, const char* data, int data_length, int qos, int retain, uint16_t* message_id);
-mqtt_message_t* mqtt_msg_puback(mqtt_connection_t* connection, uint16_t message_id);
-mqtt_message_t* mqtt_msg_pubrec(mqtt_connection_t* connection, uint16_t message_id);
-mqtt_message_t* mqtt_msg_pubrel(mqtt_connection_t* connection, uint16_t message_id);
-mqtt_message_t* mqtt_msg_pubcomp(mqtt_connection_t* connection, uint16_t message_id);
-mqtt_message_t* mqtt_msg_subscribe(mqtt_connection_t* connection, const char* topic, int qos, uint16_t* message_id);
-mqtt_message_t* mqtt_msg_unsubscribe(mqtt_connection_t* connection, const char* topic, uint16_t* message_id);
-mqtt_message_t* mqtt_msg_pingreq(mqtt_connection_t* connection);
-mqtt_message_t* mqtt_msg_pingresp(mqtt_connection_t* connection);
-mqtt_message_t* mqtt_msg_disconnect(mqtt_connection_t* connection);
+mqtt_message_t* mqtt_msg_connect(mqtt_message_buffer_t* msgb, mqtt_connect_info_t* info);
+mqtt_message_t* mqtt_msg_publish(mqtt_message_buffer_t* msgb, const char* topic, const char* data, int data_length, int qos, int retain, uint16_t message_id);
+mqtt_message_t* mqtt_msg_puback(mqtt_message_buffer_t* msgb, uint16_t message_id);
+mqtt_message_t* mqtt_msg_pubrec(mqtt_message_buffer_t* msgb, uint16_t message_id);
+mqtt_message_t* mqtt_msg_pubrel(mqtt_message_buffer_t* msgb, uint16_t message_id);
+mqtt_message_t* mqtt_msg_pubcomp(mqtt_message_buffer_t* msgb, uint16_t message_id);
+mqtt_message_t* mqtt_msg_subscribe(mqtt_message_buffer_t* msgb, const char* topic, int qos, uint16_t message_id);
+mqtt_message_t* mqtt_msg_unsubscribe(mqtt_message_buffer_t* msgb, const char* topic, uint16_t message_id);
+mqtt_message_t* mqtt_msg_pingreq(mqtt_message_buffer_t* msgb);
+mqtt_message_t* mqtt_msg_pingresp(mqtt_message_buffer_t* msgb);
+mqtt_message_t* mqtt_msg_disconnect(mqtt_message_buffer_t* msgb);
+
+mqtt_message_t* mqtt_msg_subscribe_init(mqtt_message_buffer_t* msgb, uint16_t message_id);
+mqtt_message_t* mqtt_msg_subscribe_topic(mqtt_message_buffer_t* msgb, const char* topic, int qos);
+mqtt_message_t* mqtt_msg_subscribe_fini(mqtt_message_buffer_t* msgb);
+
+mqtt_message_t* mqtt_msg_unsubscribe_init(mqtt_message_buffer_t* msgb, uint16_t message_id);
+mqtt_message_t* mqtt_msg_unsubscribe_topic(mqtt_message_buffer_t* msgb, const char* topic);
+mqtt_message_t* mqtt_msg_unsubscribe_fini(mqtt_message_buffer_t* msgb);
 
 
 #ifdef	__cplusplus

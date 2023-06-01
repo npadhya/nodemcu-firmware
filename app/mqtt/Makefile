@@ -12,8 +12,10 @@
 #     a generated lib/image xxx.a ()
 #
 ifndef PDIR
-GEN_LIBS = mqtt.a
+GEN_LIBS = libmqtt.a
 endif
+
+STD_CFLAGS=-std=gnu11 -Wimplicit
 
 #############################################################
 # Configuration i.e. compile options etc.
@@ -22,7 +24,7 @@ endif
 #   makefile at its root level - these are then overridden
 #   for a subtree within the makefile rooted therein
 #
-#DEFINES += 
+#DEFINES +=
 
 #############################################################
 # Recursion Magic - Don't touch this!!
@@ -36,9 +38,6 @@ endif
 # Required for each makefile to inherit from the parent
 #
 
-INCLUDES := $(INCLUDES) -I $(PDIR)include
-INCLUDES += -I ./
-INCLUDES += -I ../libc
 PDIR := ../$(PDIR)
 sinclude $(PDIR)Makefile
 

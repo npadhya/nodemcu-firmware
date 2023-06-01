@@ -5,15 +5,11 @@
 */
 
 
-#include "c_stdarg.h"
-#include "c_stddef.h"
-#include "c_string.h"
-
-
 #define ldebug_c
 #define LUA_CORE
 
 #include "lua.h"
+#include <string.h>
 
 #include "lapi.h"
 #include "lcode.h"
@@ -174,19 +170,102 @@ static void info_tailcall (lua_Debug *ar) {
 }
 
 
-static void collectvalidlines (lua_State *L, Closure *f) {
-  if (f == NULL || f->c.isC) {
-    setnilvalue(L->top);
-  }
-  else {
+ static void collectvalidlines (lua_State *L, Closure *f) {
+   if (f == NULL || f->c.isC) {
+     setnilvalue(L->top);
+   }
+   else {
+  #  define INFO_FILL_BYTE   0x7F
+#  define INFO_DELTA_MASK  0x80
+#  define INFO_SIGN_MASK   0x40
+#  define INFO_DELTA_6BITS 0x3F
+#  define INFO_DELTA_7BITS 0x7F
+#  define INFO_MAX_LINECNT  126
+
     Table *t = luaH_new(L, 0, 0);
-    int *lineinfo = f->l.p->lineinfo;
-    int i;
-    for (i=0; i<f->l.p->sizelineinfo; i++)
-      setbvalue(luaH_setnum(L, t, lineinfo[i]), 1);
-    sethvalue(L, L->top, t); 
+    int line = 0;
+    unsigned char *p = f->l.p->packedlineinfo;
+    if (p) {
+      for (; *p && *p != INFO_FILL_BYTE; ) {
+        if (*p & INFO_DELTA_MASK) { /* line delta */
+          int delta = *p & INFO_DELTA_6BITS;
+          unsigned char sign = *p++ & INFO_SIGN_MASK;
+          int shift;
+          for (shift = 6; *p & INFO_DELTA_MASK; p++, shift += 7) {
+            delta += (*p & INFO_DELTA_7BITS)<<shift;
+          }
+          line += sign ? -delta : delta+2;
+        } else {
+          line++;
+        }
+       p++;
+       setbvalue(luaH_setnum(L, t, line), 1);
+      }
+    }
+    sethvalue(L, L->top, t);
+   }
+   incr_top(L);
+ }
+
+/*
+ * This may seem expensive but this is only accessed frequently in traceexec
+ * and the while loop will be executed roughly half the number of non-blank
+ * source lines in the Lua function and these tend to be short.
+ */
+int luaG_getline (const Proto *f, int pc) {
+  int line = 0, thispc = 0, nextpc;
+  unsigned char *p;
+
+  for (p = f->packedlineinfo; *p && *p != INFO_FILL_BYTE;) {
+    if (*p & INFO_DELTA_MASK) { /* line delta */
+      int delta = *p & INFO_DELTA_6BITS;
+      unsigned char sign = *p++ & INFO_SIGN_MASK;
+      int shift;
+      for (shift = 6; *p & INFO_DELTA_MASK; p++, shift += 7) {
+        delta += (*p & INFO_DELTA_7BITS)<<shift;
+      }
+      line += sign ? -delta : delta+2;
+    } else {
+      line++;
+    }
+    lua_assert(*p<127);
+    nextpc = thispc + *p++;
+    if (thispc <= pc && pc < nextpc) {
+      return line;
+    }
+    thispc = nextpc;
   }
-  incr_top(L);
+  lua_assert(0);
+  return 0;
+}
+
+static int stripdebug (lua_State *L, Proto *f, int level) {
+  int len = 0, sizepackedlineinfo;
+  switch (level) {
+    case 2:
+      if (f->packedlineinfo) {
+        sizepackedlineinfo = strlen(cast(char *, f->packedlineinfo))+1;
+        f->packedlineinfo = luaM_freearray(L, f->packedlineinfo, sizepackedlineinfo, unsigned char);
+        len += sizepackedlineinfo;
+      }
+    case 1:
+      f->locvars = luaM_freearray(L, f->locvars, f->sizelocvars, struct LocVar);
+      f->upvalues = luaM_freearray(L, f->upvalues, f->sizeupvalues, TString *);
+      len += f->sizelocvars*sizeof(struct LocVar) + f->sizeupvalues*sizeof(TString *);
+      f->sizelocvars = 0;
+      f->sizeupvalues = 0;
+  }
+  return len;
+}
+
+/* This is a recursive function so it's stack size has been kept to a minimum! */
+LUA_API int luaG_stripdebug (lua_State *L, Proto *f, int level, int recv){
+  int len = 0, i;
+  if (recv != 0 && f->sizep != 0) {
+    for(i=0;i<f->sizep;i++) len += luaG_stripdebug(L, f->p[i], level, recv);
+  }
+  len += stripdebug (L, f, level);
+  return len;
 }
 
 
@@ -237,25 +316,25 @@ LUA_API int lua_getinfo (lua_State *L, const char *what, lua_Debug *ar) {
   lua_lock(L);
   if (*what == '>') {
     StkId func = L->top - 1;
-    luai_apicheck(L, ttisfunction(func) || ttislightfunction(func));
+    luai_apicheck(L, ttisfunction(func));
     what++;  /* skip the '>' */
-    if (ttisfunction(func))
-      f = clvalue(func);
-    else
+    if (ttislightfunction(func))
       plight = fvalue(func);
+    else
+      f = clvalue(func);
     L->top--;  /* pop function */
   }
   else if (ar->i_ci != 0) {  /* no tail call? */
     ci = L->base_ci + ar->i_ci;
-    lua_assert(ttisfunction(ci->func) || ttislightfunction(ci->func));
-    if (ttisfunction(ci->func))
-      f = clvalue(ci->func);
-    else
+    lua_assert(ttisfunction(ci->func));
+    if (ttislightfunction(ci->func))
       plight = fvalue(ci->func);
+    else
+      f = clvalue(ci->func);
   }
   status = auxgetinfo(L, what, ar, f, plight, ci);
-  if (c_strchr(what, 'f')) {
-    if (f != NULL) 
+  if (strchr(what, 'f')) {
+    if (f != NULL)
       setclvalue(L, L->top, f)
     else if (plight != NULL)
       setfvalue(L->top, plight)
@@ -263,7 +342,7 @@ LUA_API int lua_getinfo (lua_State *L, const char *what, lua_Debug *ar) {
       setnilvalue(L->top);
     incr_top(L);
   }
-  if (c_strchr(what, 'L'))
+  if (strchr(what, 'L'))
     collectvalidlines(L, f);
   lua_unlock(L);
   return status;
@@ -290,7 +369,6 @@ static int precheck (const Proto *pt) {
   check(!(pt->is_vararg & VARARG_NEEDSARG) ||
               (pt->is_vararg & VARARG_HASARG));
   check(pt->sizeupvalues <= pt->nups);
-  check(pt->sizelineinfo == pt->sizecode || pt->sizelineinfo == 0);
   check(pt->sizecode > 0 && GET_OPCODE(pt->code[pt->sizecode-1]) == OP_RETURN);
   return 1;
 }
@@ -577,7 +655,7 @@ static int isinstack (CallInfo *ci, const TValue *o) {
 
 void luaG_typeerror (lua_State *L, const TValue *o, const char *op) {
   const char *name = NULL;
-  const char *t = luaT_typenames[ttype(o)];
+  const char *t = luaT_typenames[ttnov(o)];
   const char *kind = (isinstack(L->ci, o)) ?
                          getobjname(L, L->ci, cast_int(o - L->base), &name) :
                          NULL;
@@ -605,8 +683,8 @@ void luaG_aritherror (lua_State *L, const TValue *p1, const TValue *p2) {
 
 
 int luaG_ordererror (lua_State *L, const TValue *p1, const TValue *p2) {
-  const char *t1 = luaT_typenames[ttype(p1)];
-  const char *t2 = luaT_typenames[ttype(p2)];
+  const char *t1 = luaT_typenames[ttnov(p1)];
+  const char *t2 = luaT_typenames[ttnov(p2)];
   if (t1[2] == t2[2])
     luaG_runerror(L, "attempt to compare two %s values", t1);
   else
@@ -629,7 +707,7 @@ static void addinfo (lua_State *L, const char *msg) {
 void luaG_errormsg (lua_State *L) {
   if (L->errfunc != 0) {  /* is there an error handling function? */
     StkId errfunc = restorestack(L, L->errfunc);
-    if (!ttisfunction(errfunc) && !ttislightfunction(errfunc)) luaD_throw(L, LUA_ERRERR);
+    if (!ttisfunction(errfunc)) luaD_throw(L, LUA_ERRERR);
     setobjs2s(L, L->top, L->top - 1);  /* move argument */
     setobjs2s(L, L->top - 1, errfunc);  /* push function */
     incr_top(L);

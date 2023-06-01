@@ -15,6 +15,7 @@ ifndef PDIR
 GEN_LIBS = libuser.a
 endif
 
+STD_CFLAGS=-std=gnu11 -Wimplicit
 
 #############################################################
 # Configuration i.e. compile options etc.
@@ -23,7 +24,7 @@ endif
 #   makefile at its root level - these are then overridden
 #   for a subtree within the makefile rooted therein
 #
-#DEFINES += 
+DEFINES += -DESP_INIT_DATA_DEFAULT="\"$(SDK_DIR)/bin/esp_init_data_default_v05.bin\""
 
 #############################################################
 # Recursion Magic - Don't touch this!!
@@ -37,13 +38,6 @@ endif
 # Required for each makefile to inherit from the parent
 #
 
-INCLUDES := $(INCLUDES) -I $(PDIR)include
-INCLUDES += -I ./
-INCLUDES += -I ../../include/ets
-INCLUDES += -I ../libc
-INCLUDES += -I ../platform
-INCLUDES += -I ../lua
-INCLUDES += -I ../wofs
 INCLUDES += -I ../spiffs
 PDIR := ../$(PDIR)
 sinclude $(PDIR)Makefile

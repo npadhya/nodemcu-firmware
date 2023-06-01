@@ -5,9 +5,8 @@
 extern "C" {
 #endif
 
-#include "c_stdint.h"
-#include "c_stddef.h"
-#include "lualib.h"
+#include <stdint.h>
+#include <stddef.h>
 #include "lauxlib.h"
 
 #define MAXOPT 16
@@ -24,8 +23,8 @@ typedef struct
     uint8_t ver;                /* CoAP version number */
     uint8_t t;                  /* CoAP Message Type */
     uint8_t tkl;                /* Token length: indicates length of the Token field */
-    uint8_t code;               /* CoAP status code. Can be request (0.xx), success reponse (2.xx), 
-                                 * client error response (4.xx), or rever error response (5.xx) 
+    uint8_t code;               /* CoAP status code. Can be request (0.xx), success reponse (2.xx),
+                                 * client error response (4.xx), or rever error response (5.xx)
                                  * For possible values, see http://tools.ietf.org/html/rfc7252#section-12.1 */
     uint8_t id[2];
 } coap_header_t;
@@ -116,6 +115,10 @@ typedef enum
     COAP_CONTENTTYPE_NONE = -1, // bodge to allow us not to send option block
     COAP_CONTENTTYPE_TEXT_PLAIN = 0,
     COAP_CONTENTTYPE_APPLICATION_LINKFORMAT = 40,
+    COAP_CONTENTTYPE_APPLICATION_XML = 41,
+    COAP_CONTENTTYPE_APPLICATION_OCTET_STREAM = 42,
+    COAP_CONTENTTYPE_APPLICATION_EXI = 47,
+    COAP_CONTENTTYPE_APPLICATION_JSON = 50,
 } coap_content_type_t;
 
 ///////////////////////
@@ -151,23 +154,23 @@ typedef struct
 typedef struct coap_luser_entry coap_luser_entry;
 
 struct coap_luser_entry{
-    lua_State *L;
     // int ref;
     // char name[MAX_SEGMENTS_SIZE+1];         // +1 for string '\0'
     const char *name;
     coap_luser_entry *next;
+    int content_type;
 };
 
 struct coap_endpoint_t{
     coap_method_t method;               /* (i.e. POST, PUT or GET) */
-    coap_endpoint_func handler;         /* callback function which handles this 
-                                         * type of endpoint (and calls 
+    coap_endpoint_func handler;         /* callback function which handles this
+                                         * type of endpoint (and calls
                                          * coap_make_response() at some point) */
-    const coap_endpoint_path_t *path;   /* path towards a resource (i.e. foo/bar/) */ 
+    const coap_endpoint_path_t *path;   /* path towards a resource (i.e. foo/bar/) */
     const char *core_attr;              /* the 'ct' attribute, as defined in RFC7252, section 7.2.1.:
-                                         * "The Content-Format code "ct" attribute 
-                                         * provides a hint about the 
-                                         * Content-Formats this resource returns." 
+                                         * "The Content-Format code "ct" attribute
+                                         * provides a hint about the
+                                         * Content-Formats this resource returns."
                                          * (Section 12.3. lists possible ct values.) */
 	coap_luser_entry *user_entry;
 };
@@ -187,6 +190,11 @@ void coap_setup(void);
 void endpoint_setup(void);
 
 int coap_buildOptionHeader(uint32_t optDelta, size_t length, uint8_t *buf, size_t buflen);
+int check_token(coap_packet_t *pkt);
+
+#include "uri.h"
+int coap_make_request(coap_rw_buffer_t *scratch, coap_packet_t *pkt, coap_msgtype_t t, coap_method_t m, coap_uri_t *uri, const uint8_t *payload, size_t payload_len);
+
 
 #ifdef __cplusplus
 }

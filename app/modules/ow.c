@@ -1,17 +1,15 @@
 // Module for interfacing with the OneWire interface
 
-//#include "lua.h"
-#include "lualib.h"
+#include "module.h"
 #include "lauxlib.h"
-#include "auxmods.h"
-#include "lrotable.h"
+#include "platform.h"
 #include "driver/onewire.h"
 
 // Lua: ow.setup( id )
 static int ow_setup( lua_State *L )
 {
   unsigned id = luaL_checkinteger( L, 1 );
-  
+
   if(id==0)
     return luaL_error( L, "no 1-wire for D0" );
 
@@ -136,6 +134,8 @@ static int ow_read_bytes( lua_State *L )
   if( size == 0 )
     return 0;
 
+  luaL_argcheck(L, size <= LUAL_BUFFERSIZE, 2, "Attempt to read too many characters");
+
   luaL_Buffer b;
   luaL_buffinit( L, &b );
   char *p = luaL_prepbuffer(&b);
@@ -201,8 +201,15 @@ static int ow_search( lua_State *L )
   luaL_Buffer b;
   luaL_buffinit( L, &b );
   char *p = luaL_prepbuffer(&b);
+  uint8_t alarm_search = 0;
 
-  if(onewire_search(id, (uint8_t *)p)){
+  if(lua_isnumber(L, 2))
+    alarm_search = lua_tointeger(L, 2);
+  if(alarm_search != 0)
+    alarm_search = 1;
+
+
+  if(onewire_search(id, (uint8_t *)p, alarm_search)){
     luaL_addsize(&b, 8);
     luaL_pushresult( &b );
   } else {
@@ -210,7 +217,7 @@ static int ow_search( lua_State *L )
     lua_pop(L,1);
     lua_pushnil(L);
   }
-  return 1; 
+  return 1;
 }
 #endif
 
@@ -281,47 +288,58 @@ static int ow_crc16( lua_State *L )
 #endif
 #endif
 
-// Module function map
-#define MIN_OPT_LEVEL   2
-#include "lrodefs.h"
-const LUA_REG_TYPE ow_map[] = 
+// Lua: r = ow.set_timings( reset_tx, reset_wait, reset_rx, w1_low, w1_high, w0_low, w0_high, r_low, r_wait, r_delay )
+static int ow_set_timings( lua_State *L )
 {
-  { LSTRKEY( "setup" ),  LFUNCVAL( ow_setup ) },
-  { LSTRKEY( "reset" ), LFUNCVAL( ow_reset ) },
-  { LSTRKEY( "skip" ), LFUNCVAL( ow_skip ) },
-  { LSTRKEY( "select" ), LFUNCVAL( ow_select ) },
-  { LSTRKEY( "write" ), LFUNCVAL( ow_write ) },
-  { LSTRKEY( "write_bytes" ), LFUNCVAL( ow_write_bytes ) },
-  { LSTRKEY( "read" ), LFUNCVAL( ow_read ) },
-  { LSTRKEY( "read_bytes" ), LFUNCVAL( ow_read_bytes ) },
-  { LSTRKEY( "depower" ), LFUNCVAL( ow_depower ) },
+  if(lua_isnumber(L, 1))
+    onewire_timings.reset_tx = lua_tointeger(L, 1);
+  if(lua_isnumber(L, 2))
+    onewire_timings.reset_wait = lua_tointeger(L, 2);
+  if(lua_isnumber(L, 3))
+    onewire_timings.reset_rx = lua_tointeger(L, 3);
+  if(lua_isnumber(L, 4))
+    onewire_timings.w_1_low = lua_tointeger(L, 4);
+  if(lua_isnumber(L, 5))
+    onewire_timings.w_1_high = lua_tointeger(L, 5);
+  if(lua_isnumber(L, 6))
+    onewire_timings.w_0_low = lua_tointeger(L, 6);
+  if(lua_isnumber(L, 7))
+    onewire_timings.w_0_high = lua_tointeger(L, 7);
+  if(lua_isnumber(L, 8))
+    onewire_timings.r_low = lua_tointeger(L, 8);
+  if(lua_isnumber(L, 9))
+    onewire_timings.r_wait = lua_tointeger(L, 9);
+  if(lua_isnumber(L, 10))
+    onewire_timings.r_delay = lua_tointeger(L, 10);
+
+  return 0;
+}
+
+// Module function map
+LROT_BEGIN(ow, NULL, 0)
+  LROT_FUNCENTRY( setup, ow_setup )
+  LROT_FUNCENTRY( reset, ow_reset )
+  LROT_FUNCENTRY( skip, ow_skip )
+  LROT_FUNCENTRY( select, ow_select )
+  LROT_FUNCENTRY( write, ow_write )
+  LROT_FUNCENTRY( write_bytes, ow_write_bytes )
+  LROT_FUNCENTRY( read, ow_read )
+  LROT_FUNCENTRY( read_bytes, ow_read_bytes )
+  LROT_FUNCENTRY( depower, ow_depower )
 #if ONEWIRE_SEARCH
-  { LSTRKEY( "reset_search" ), LFUNCVAL( ow_reset_search ) },
-  { LSTRKEY( "target_search" ), LFUNCVAL( ow_target_search ) },
-  { LSTRKEY( "search" ), LFUNCVAL( ow_search ) },
+  LROT_FUNCENTRY( reset_search, ow_reset_search )
+  LROT_FUNCENTRY( target_search, ow_target_search )
+  LROT_FUNCENTRY( search, ow_search )
 #endif
 #if ONEWIRE_CRC
-  { LSTRKEY( "crc8" ), LFUNCVAL( ow_crc8 ) },
+  LROT_FUNCENTRY( crc8, ow_crc8 )
 #if ONEWIRE_CRC16
-  { LSTRKEY( "check_crc16" ), LFUNCVAL( ow_check_crc16 ) },
-  { LSTRKEY( "crc16" ), LFUNCVAL( ow_crc16 ) },
+  LROT_FUNCENTRY( check_crc16, ow_check_crc16 )
+  LROT_FUNCENTRY( crc16, ow_crc16 )
 #endif
 #endif
-#if LUA_OPTIMIZE_MEMORY > 0
+  LROT_FUNCENTRY( set_timings, ow_set_timings )
+LROT_END(ow, NULL, 0)
 
-#endif
-  { LNILKEY, LNILVAL }
-};
 
-LUALIB_API int luaopen_ow( lua_State *L )
-{
-#if LUA_OPTIMIZE_MEMORY > 0
-  return 0;
-#else // #if LUA_OPTIMIZE_MEMORY > 0
-  luaL_register( L, AUXLIB_OW, ow_map );
-  
-  // Add the constants
-  
-  return 1;
-#endif // #if LUA_OPTIMIZE_MEMORY > 0
-}
+NODEMCU_MODULE(OW, "ow", ow, NULL);
